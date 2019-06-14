@@ -27,3 +27,4 @@ CarrierDelay: in minutes
 WeatherDelay: in minutes
 NASDelay: in minutes
 SecurityDelay: in minutes
+LateAircraftDelay: in minutes

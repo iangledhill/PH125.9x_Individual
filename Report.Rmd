@@ -1,5 +1,6 @@
 ---
-title: "MovieLens_Report"
+title: "Individual Learner"
+subtitle: "US Domestic Flight Delays"
 author: "Ian Gledhill"
 date: "03/06/2019"
 output:
@@ -12,7 +13,7 @@ output:
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-```{r main, code = source("Solution.R"), include=FALSE, echo=FALSE}
+```{r main, code = source("Main.R"), include=FALSE, echo=FALSE}
 ```
 
 ```{r}
@@ -24,19 +25,131 @@ library(knitr)
 
 ## Overview
 
-This project will look at the delayed flight data recorded in the US in 2008 and use data analysis to create a model to predict a delayed flight of 10 minutes or more based on the features recorded by the US Department of Transport.
+This project will look at the delayed flight data recorded in the US for the 3 months from January to March 2018 and use data analysis to create a model to predict whether a flight would be delayed from its scheduled departure time. The data is provided by the US Department of Transport and covers `r length(levels(active_flights$OP_UNIQUE_CARRIER))` carriers operating from `r length(levels(active_flights$ORIGIN_AIRPORT_ID))` airports.
 
 
 ## Dataset
 
 ### Source
-https://www.kaggle.com/giovamata/airlinedelaycauses
+
+The data is provided by:
+
+  https://www.transtats.bts.gov
+
+  BUREAU OF TRANSPORTATION STATISTICS 
+  U.S. Department of Transportation 
+  1200 New Jersey Avenue, SE 
+  Washington, DC 20590 
+  855-368-4200 
+
+
+The page to download the data used in this project can be found here: 
 
 https://www.transtats.bts.gov/Fields.asp?Table_ID=236
 
+
 ### Sample Size for Analysis
+The DoT record more than 500,000 domestic flights per months. The period covered by this project contains `r format_number(nrow(active_flights) + nrow(cancelled_flights))` data points. Each data point has `r length(active_flights)` measurements.
 
 ### Shape of the Data
+The data that the DoT make available falls into the 11 groupings shown below (the number of measurements in each group are shown in brackets). Not all the groupings are relevant to this project, which is only concerned with delayed departures; for example, the arrival performance at the destination airport is not relevant. The groupings that are considered useful are shown in bold.
+
+* **Time Period** (6 catagorical)
+
+* **Airline** (5 catagorial)
+
+* **Origin** (9 catagorical)
+
+* Destination (9 catagorical)
+
+* **Departure Performance** (3 catagorical, 6 continuous)
+
+* Arrival Performance (3 catagorical, 6 continuous)
+
+* **Cancellations and Diversions** (3 catagorical)
+
+* **Flight Summaries** (3 catagorical, 3 continuous )
+
+* **Cause of Delay** (5 catagorical)
+
+* **Gate Returns** (3 continuous)
+
+* Diverted Airport Information (4 x sub-groups reprenting each diversion with 4 catagorical and 3 continuous)
+
+### Overview of the Data
+
+There are `r format_number(nrow(active_flights) + nrow(cancelled_flights))` departures recorded in total for the period covered by the data.
+Of these `r format_number(nrow(active_flights))` have recorded departure times, which this report refers to as _active flights_. The other `r format_number(nrow(cancelled_flights))` have no departure recorded, mostly because the flights were cancelled.
+
+Of the _active flights_: 
+* `r percent(mean(active_flights$DEP_DELAY < 0))` of active flights departed ahead of their scheduled time 
+* `r percent(mean(active_flights$DEP_DELAY == 0))` of active flights departed at their scheduled time 
+* `r percent(mean(active_flights$DEP_DELAY > 0))` of active flights departed after their scheduled time 
+
+This project is only considering _delayed_ departures, i.e. where the recorded actual departure time is after the scheduled departure time.
+
+```{r Delay_Duration, echo=FALSE}
+active_flights %>%
+    filter(DEP_DELAY > 0) %>%
+    mutate(DEP_DELAY_LIMIT = ifelse( DEP_DELAY > 180, 180, DEP_DELAY)) %>%
+    ggplot(aes(x=DEP_DELAY_LIMIT)) + 
+    geom_histogram(bins=30) +
+    ggtitle("Flight Delays", subtitle="Delay Duration (> 3 hours shown as 3 hours)") +
+    xlab("Delay (in minutes") +
+    theme_minimal()
+```  
+
+We can see that most flight delays are less than 50 minutes.
+
+```{r Delay_By_TimeSlot, echo=FALSE}
+active_flights %>%
+    filter(DEP_DELAY > 0) %>%
+    ggplot(aes(x=DEP_TIME_BLK)) + 
+    geom_histogram(stat="count") +
+    ggtitle("Flight Delays", subtitle="Distribution through the day") +
+    xlab("Time Slot") +
+    theme_minimal()
+```
+
+```{r Delay_By_DayOfWeek, echo=FALSE}
+active_flights %>%
+    group_by(DEP_TIME_BLK) %>%
+    summarise(
+      n = n(),
+      n_delayed = sum(DEP_DELAY > 0),
+      delay_rate = n_delayed / n
+    ) %>%
+    mutate(DEP_TIME_BLK_SHORT = substr(DEP_TIME_BLK,1,2)) %>%
+    ggplot(aes(x=DEP_TIME_BLK_SHORT)) + 
+    geom_point(aes(y = n), color="blue") +
+    geom_point(aes(y=n_delayed), color="red") +
+    geom_point(aes(y=delay_rate, size=delay_rate, color=delay_rate)) +
+    ggtitle("Flight Delays", subtitle="Distribution by time slot") +
+    labs(col="Delay Rate", size="Delay Rate") +
+    xlab("Time Slot") +
+    ylab("Count") +
+    theme_minimal()
+```
+
+
+```{r Delay_By_DayOfWeek2, echo=FALSE}
+active_flights %>%
+    group_by(DAY_OF_WEEK) %>%
+    summarise(
+      n = n(),
+      n_delayed = sum(DEP_DELAY > 0),
+      delay_rate = n_delayed / n
+    ) %>%
+    ggplot(aes(x=DAY_OF_WEEK)) + 
+    geom_point(aes(y = n), color="blue") +
+    geom_point(aes(y=n_delayed), color="red") +
+    geom_point(aes(y=delay_rate, size=delay_rate, color=delay_rate)) +
+    ggtitle("Flight Delays", subtitle="Distribution by Day Of Week") +
+    labs(col="Delay Rate", size="Delay Rate") +
+    xlab("Day of Week") +
+    ylab("Count") +
+    theme_minimal()
+```
 
 
 ### Training and Test Data Partitions
@@ -44,172 +157,43 @@ https://www.transtats.bts.gov/Fields.asp?Table_ID=236
 
 ## Goal
 
+The goal of this project is to create a prediction model that would estimate the probably deviation from the scheduled departure time for any  domestic flight from any US airport covered by the DoT data.
+
+
 
 \newpage
 # Approach
 
 ## Data Cleansing
 
+#### Cancelled Flights
+The aircraft will either leave early, leave on time or be delayed. The expected departure time is given by *CRS_DEP_TIME* and the number of minutes relative to this time of the actual departure is given by *DEP_DELAY*. In some case the *DEP_DELAY* will not be available (and be given a value of N/A in the data). This is normally due to the flight being cancelled but can be not available even though the flight is not recorded as being cancelled. 
+
+
 ## Modelling Techniques
 
 The data set is quite large and has many features. This makes it computationally expensive. To aleviate this Principal Component Analysis (PCA) will be used to reduce the number of features.  
 
-### Version 1 : Naive Implementation
-The first attempt will use the average movie rating of the training data to predict the rating in the test data. The RMSE will then be measured. The formula for Y (the prediction) is described as follows, where u is the user, i is the movie, ${\mu}$ is the average and ${\epsilon}$ is the error.
+An initial attemp to use SVM (_Support Vector Machines_) proved to be too computationally expensive to be useful.
+CART (_classification and regression trees_) has been adopted.
 
-$$
-\begin{aligned}
- Y_{u,i} &= \mu + \epsilon_{u,i}
-\end{aligned}
-$$
+After training the model the best CP (_complexity parameter_) was found to be `r train_rpart$bestTune$cp`.
 
-The result for this is shown here:
-
-```{r movie_mean}
-kable(head(rmse_results,1), caption="Results for method 1")
+```{r CART_BestFit, echo=FALSE}
+rpart.plot(train_rpart$finalModel)
 ```
 
-### Version 2 : Consider the individual movie effect 
-This modification will use the mean with the addition of a movie effect to take into account that some movies are rated more favourably then others. For example, the top 5 most-rated and top 5 least-rated movies are shown below:
-
-```{r movie_best_rated}
-kable(head(movies_by_mean,5), caption="Top 5 Movies - Best Rated")
-```
-
-
-```{r movie_worst_rated}
-kable(tail(movies_by_mean,5), caption="Top 5 Movies - Worst Rated")
-```
-
-We can see that some movies are rated very highly. For example `r best_movie$title` has an average rating of `r best_movie$average` stars whilst `r worst_movie$title` only has `r worst_movie$average`. The best and worst movies are not necessilly the most and least frequently rated. The top 5 most and least rated are shown below:
-
-
-```{r movie_most_rated}
-kable(head(movies_by_n,5), caption="Top 5 Movies - Most Number of Ratings")
-```
-
-
-```{r movie_least_rated}
-kable(tail(movies_by_n,5), caption="Top 5 Movies - Least Number of Ratings")
-```
-
-We can see that some movies are rated very often. For example `r most_movie$title` has `r most_movie$n` ratings whilst `r least_movie$title` only has `r least_movie$n`. 
-
-If we plot the mean against the number of ratings we can see that the extremeties (1 star and 5 star) are only obtained by movies with a small number of ratings.
-
-```{r movie_extremtities_have_low_numbers, echo=FALSE}
-ggplot(movies, aes(x = average, y = n, size=n, color=n)) +
-  geom_point() +
-  scale_y_continuous(trans='log10') +
-  ggtitle("Average Ratings", subtitle="Extremeties occuiped by small number of ratings") +
-  xlab("Average Rating") +
-  ylab("Number of Ratings") +
-  theme_minimal()
-```
-
-This shows us that movies with small number of ratings may have a distorting effect.
-
-The formula for Y (the prediction) this is described as follows, where u is the user, i is the movie, ${\mu}$ is the average, ${\epsilon}$ is the error and b is the movie effect.
-
-$$
-\begin{aligned}
- Y_{u,i} &= \mu + b_i + \epsilon_{u,i}
-\end{aligned}
-$$
-
-
-```{r methods_12}
-kable(head(rmse_results,2), caption="Results for method 1 and method 2")
-```
-
-### Version 3 : Consider the individual user effect 
-This is similar to version 2, but instead of looking at the movie effect we're going to look at the user effect; i.e. the fact that some users generally rate movies more generously then others and some users make lots of reviews whilst others make very few.
-
-For example, the top 5 and bottom 5 users based on avarege rating given by that user is shown below:
-
-```{r user_best_ratings}
-kable(head(users_by_mean,5), caption="Top 5 Users - Highest Average Ratings")
-```
-
-
-```{r user_worst_ratings}
-kable(tail(users_by_mean,5), caption="Top 5 Users - Lowest Average Ratings")
-```
-
-As with movies we can see that there is variability in both the ratings given (some users appear to be more generous) and the number of ratings the usersa provide. For example `r best_user$userId` has given average rating of `r best_user$average` stars whilst `r worst_user$userId` has given an average rating of only `r worst_user$average`. This might be because user `r worst_user$id` tends to be make unlucky movie choices and watches poor movies. 
-
-
-```{r user_most_rated}
-kable(head(users_by_n,5), caption="Top 5 Users - Most Number of Ratings Provided")
-```
-
-
-```{r user_least_rated}
-kable(tail(users_by_n,5), caption="Top 5 Users - Least Number of Ratings Provided")
-```
-
-
-The formula for Y (the prediction) is described as follows, where u is the user, i is the movie, ${\mu}$ is the average, ${\epsilon}$ is the error and b is the movie effect.
-
-
-$$
-\begin{aligned}
- Y_{u,i} &= \mu + b_u + \epsilon_{u,i}
-\end{aligned}
-$$
-
-
-```{r methods_123, echo=FALSE}
-kable(head(rmse_results,3), caption="Results for method 1, 2 and 3")
-```
-
-### Version 4
-This will use the combination of the movie effect and the user effect together with an adjustment (a _regulator_) to predict a user's rating.
-
-The formula for Y (the prediction) is described as follows, where u is the user, i is the movie, ${\mu}$ is the average, ${\epsilon}$ is the error and b is the movie effect.
-
-$$
-\begin{aligned}
-\frac{1}{N} \sum_{u,i} (y_{u,i} - \mu -b_{i})^2 + \lambda \sum_{i} b_{i}^2
-\end{aligned}
-$$
-
-```{r methods, echo=FALSE}
-ggplot(rmse_results, aes(x = method, y = RMSE)) +
-    geom_point() +
-    ggtitle("RMSE", subtitle="Changes ") +
-    xlab("Method") +
-    theme_minimal()
-```
-
-
-```{r methods_1234, echo=FALSE}
-kable(head(rmse_results,4), caption="Results for all 4 methods")
+```{r CART_BestFit_Rules, echo=FALSE}
+rpart.rules(train_rpart$finalModel)
 ```
 
 \newpage
 # Results
-```{r regulated, echo=FALSE}
-ggplot(regulated_data, aes(x = lambdas, y = RMSE)) +
-    geom_point() +
-    geom_line() +
-    ggtitle("Regulated Fit", subtitle="Movie and User") +
-    xlab("Regulator Value (Lambda)") +
-    theme_minimal()
-```
+
 
 
 \newpage
 # Conclusion
-
-The best prediction occurs with the mean modified with the regulated movie and user effect. The majority of the improvement over using a simple mean comes when the user and movie effects are used in tandem. Using both is superior to using either by themselves. Also, the effect of the regulator value is not very significant compared to using just the movie and user effect.
-
-Additional analysis that might increase the prediction accuracy (but not carried out by this project):
-
-Are there additional effects which could be investigated:
-1. genre : are some genres generally rated hire?
-2. age : are older films generally rated higher or lower?
-3. genre combinations : are some genre combinations more likely to rated higher or lower?
 
 
 
@@ -217,7 +201,4 @@ Are there additional effects which could be investigated:
 # Bibliography and References
 
 
-https://machinelearningmastery.com/how-to-get-started-with-machine-learning-algorithms-in-r/
-
-https://stackoverflow.com/questions/16728524/classification-using-r-in-a-data-set-with-numeric-and-categorical-variables
 

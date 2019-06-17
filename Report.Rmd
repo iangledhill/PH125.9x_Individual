@@ -25,7 +25,7 @@ library(knitr)
 
 ## Overview
 
-This project will look at the delayed flight data recorded in the US for the 3 months from January to March 2018 and use data analysis to create a model to predict whether a flight would be delayed from its scheduled departure time. The data is provided by the US Department of Transport and covers `r length(levels(active_flights$OP_UNIQUE_CARRIER))` carriers operating from `r length(levels(active_flights$ORIGIN_AIRPORT_ID))` airports.
+This project will look at the delayed flight data recorded in the US for the 3 months from January to March 2018 and use data analysis to create a model to predict whether a flight would be delayed from its scheduled departure time. The data is provided by the US Department of Transport and covers `r length(levels(flights$OP_UNIQUE_CARRIER))` carriers operating from `r length(levels(flights$ORIGIN_AIRPORT_ID))` airports.
 
 
 ## Dataset
@@ -49,7 +49,7 @@ https://www.transtats.bts.gov/Fields.asp?Table_ID=236
 
 
 ### Sample Size for Analysis
-The DoT record more than 500,000 domestic flights per months. The period covered by this project contains `r format_number(nrow(active_flights) + nrow(cancelled_flights))` data points. Each data point has `r length(active_flights)` measurements.
+The DoT record more than 500,000 domestic flights per months. The period covered by this project contains `r format_number(nrow(flights))` data points. Each data point has `r length(flights)` measurements.
 
 ### Shape of the Data
 The data that the DoT make available falls into the 11 groupings shown below (the number of measurements in each group are shown in brackets). Not all the groupings are relevant to this project, which is only concerned with delayed departures; for example, the arrival performance at the destination airport is not relevant. The groupings that are considered useful are shown in bold.
@@ -78,41 +78,46 @@ The data that the DoT make available falls into the 11 groupings shown below (th
 
 ### Overview of the Data
 
-There are `r format_number(nrow(active_flights) + nrow(cancelled_flights))` departures recorded in total for the period covered by the data.
-Of these `r format_number(nrow(active_flights))` have recorded departure times, which this report refers to as _active flights_. The other `r format_number(nrow(cancelled_flights))` have no departure recorded, mostly because the flights were cancelled.
+There are `r format_number(nrow(flights))` deomestic departures from US airports in the period covered by the data.
+The break down of these flights by departure status is show below:
 
-Of the _active flights_: 
-* `r percent(mean(active_flights$DEP_DELAY < 0))` of active flights departed ahead of their scheduled time 
-* `r percent(mean(active_flights$DEP_DELAY == 0))` of active flights departed at their scheduled time 
-* `r percent(mean(active_flights$DEP_DELAY > 0))` of active flights departed after their scheduled time 
+```{r Status_Frequency, echo=FALSE}
+flights %>%
+    ggplot(aes(x=DEP_STATUS)) + 
+    ggtitle("All Flights", subtitle="Departure Status") +
+    xlab("Departure Status") +
+    ylab("Count") +
+    geom_bar() +
+    theme_minimal()
+```  
 
-This project is only considering _delayed_ departures, i.e. where the recorded actual departure time is after the scheduled departure time.
+
+* `r format_percent(mean(flights$DEP_STATUS == "CANCELLED"))` of flights were cancelled 
+
+* `r format_percent(mean(flights$DEP_STATUS == "EARLY"))` of flights departed ahead of their scheduled time 
+
+* `r format_percent(mean(flights$DEP_STATUS == "ONTIME"))` of flights departed at their scheduled time 
+
+* `r format_percent(mean(flights$DEP_STATUS == "DELAYED"))` of flights departed after their scheduled time 
+
+Note that the `r format_percent(mean(flights$DEP_STATUS == "UNKNOWN"))` percentage of flights (equal to `r nrow(flights[flights$DEP_STATUS == "UNKNOWN"])` flights) were not cancelled but have no depature time recorded. 
 
 ```{r Delay_Duration, echo=FALSE}
-active_flights %>%
-    filter(DEP_DELAY > 0) %>%
+flights %>%
+    filter(DEP_STATUS == "DELAYED") %>%
     mutate(DEP_DELAY_LIMIT = ifelse( DEP_DELAY > 180, 180, DEP_DELAY)) %>%
     ggplot(aes(x=DEP_DELAY_LIMIT)) + 
     geom_histogram(bins=30) +
     ggtitle("Flight Delays", subtitle="Delay Duration (> 3 hours shown as 3 hours)") +
-    xlab("Delay (in minutes") +
+    xlab("Delay (in minutes)") +
     theme_minimal()
 ```  
 
-We can see that most flight delays are less than 50 minutes.
-
-```{r Delay_By_TimeSlot, echo=FALSE}
-active_flights %>%
-    filter(DEP_DELAY > 0) %>%
-    ggplot(aes(x=DEP_TIME_BLK)) + 
-    geom_histogram(stat="count") +
-    ggtitle("Flight Delays", subtitle="Distribution through the day") +
-    xlab("Time Slot") +
-    theme_minimal()
-```
+There are quite a small number of outliers which have exceptionally long delay times. These have been included in the 180 minutes bin to make the histogram more readable. We can see that most delays are within 30 minutes. 
 
 ```{r Delay_By_DayOfWeek, echo=FALSE}
-active_flights %>%
+flights %>%
+    filter(ACTIVE) %>%
     group_by(DEP_TIME_BLK) %>%
     summarise(
       n = n(),
@@ -124,16 +129,18 @@ active_flights %>%
     geom_point(aes(y = n), color="blue") +
     geom_point(aes(y=n_delayed), color="red") +
     geom_point(aes(y=delay_rate, size=delay_rate, color=delay_rate)) +
-    ggtitle("Flight Delays", subtitle="Distribution by time slot") +
+    ggtitle("Delayed Flights", subtitle="Distribution by time slot") +
     labs(col="Delay Rate", size="Delay Rate") +
     xlab("Time Slot") +
     ylab("Count") +
     theme_minimal()
 ```
 
+This shows the number of departures in an hour slot (in blue) and the number of delays (in red).  
 
 ```{r Delay_By_DayOfWeek2, echo=FALSE}
-active_flights %>%
+flights %>%
+    filter(ACTIVE) %>%
     group_by(DAY_OF_WEEK) %>%
     summarise(
       n = n(),
@@ -144,13 +151,14 @@ active_flights %>%
     geom_point(aes(y = n), color="blue") +
     geom_point(aes(y=n_delayed), color="red") +
     geom_point(aes(y=delay_rate, size=delay_rate, color=delay_rate)) +
-    ggtitle("Flight Delays", subtitle="Distribution by Day Of Week") +
+    ggtitle("Delayed Flights", subtitle="Distribution by Day Of Week") +
     labs(col="Delay Rate", size="Delay Rate") +
     xlab("Day of Week") +
     ylab("Count") +
     theme_minimal()
 ```
 
+This shows the number of departures by day (in blue) and the number of delays (in red). 
 
 ### Training and Test Data Partitions
 
@@ -167,20 +175,19 @@ The goal of this project is to create a prediction model that would estimate the
 ## Data Cleansing
 
 #### Cancelled Flights
-The aircraft will either leave early, leave on time or be delayed. The expected departure time is given by *CRS_DEP_TIME* and the number of minutes relative to this time of the actual departure is given by *DEP_DELAY*. In some case the *DEP_DELAY* will not be available (and be given a value of N/A in the data). This is normally due to the flight being cancelled but can be not available even though the flight is not recorded as being cancelled. 
-
+The aircraft will either leave early, leave on time or be delayed. The expected departure time is given by *CRS_DEP_TIME* and the number of minutes relative to this time of the actual departure is given by *DEP_DELAY*. The number of flights cancelled is `r format_number(sum(flights$CANCELLED))`. 
+As these planes don't have a departure time the *DEP_DELAY* for the flight will not be available and will therefore be given a value of N/A in the data. 
 
 ## Modelling Techniques
 
 The data set is quite large and has many features. This makes it computationally expensive. To aleviate this Principal Component Analysis (PCA) will be used to reduce the number of features.  
 
-An initial attemp to use SVM (_Support Vector Machines_) proved to be too computationally expensive to be useful.
-CART (_classification and regression trees_) has been adopted.
+CART (_classification and regression trees_) has been adopted to build a predictive model.
 
 After training the model the best CP (_complexity parameter_) was found to be `r train_rpart$bestTune$cp`.
 
 ```{r CART_BestFit, echo=FALSE}
-rpart.plot(train_rpart$finalModel)
+rpart.plot(train_rpart$finalModel, box.palette="Blues")
 ```
 
 ```{r CART_BestFit_Rules, echo=FALSE}

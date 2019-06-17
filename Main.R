@@ -14,10 +14,13 @@ if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.
 if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
 if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
 if(!require(scales)) install.packages("scales", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(ggrepel)) install.packages("ggrepel", repos = "http://cran.us.r-project.org")
 
 library(tidyverse)
 library(caret)
-library(rpart.plot)
+library(ggrepel)
+
 
 multiMerge = function(filePattern, nrows){
   
@@ -37,13 +40,11 @@ multiMerge = function(filePattern, nrows){
                              sep=",",
                              colClasses=c(
                                "MONTH"="factor",
-                               "ORIGIN_AIRPORT_ID"="factor",
-                               "ORIGIN"="factor",
                                "ORIGIN_STATE_ABR"="factor", 
-                               "DAY_OF_MONTH"="factor", 
+                               "ORIGIN"="factor",
+                               "OP_UNIQUE_CARRIER"="factor",
                                "DEP_TIME_BLK"="factor", 
                                "DAY_OF_WEEK"="factor", 
-                               "OP_UNIQUE_CARRIER"="factor", 
                                "OP_CARRIER_FL_NUM"="factor"),
                              stringsAsFactors = FALSE)
                 })
@@ -52,9 +53,21 @@ multiMerge = function(filePattern, nrows){
 
 }
 
-flights <- multiMerge("2018.*zip", 15000)
-flights <- flights[sample(nrow(flights), 30000),] %>%
+flights <- multiMerge("2018.*zip", 750000)
+original_data_size <- nrow(flights)
+
+# Retain top 20 airports
+top20Airports <- flights %>% group_by(ORIGIN) %>% summarise(n = n()) %>% arrange(desc(n)) %>% top_n(20)
+flights <- flights[flights$ORIGIN %in% top20Airports$ORIGIN,]
+
+# Restate factors
+flights$ORIGIN <- factor(flights$ORIGIN)
+flights$OP_UNIQUE_CARRIER <- factor(flights$OP_UNIQUE_CARRIER)
+
+sample_data_size <- 100000
+flights <- flights[sample(nrow(flights), sample_data_size),] %>%
             mutate(CANCELLED = as.logical(CANCELLED))
+
 flights <- flights %>%
             mutate(
               ACTIVE = ifelse(!is.na(DEP_DELAY), TRUE, FALSE),
@@ -68,51 +81,63 @@ flights <- flights %>%
 
 levels(flights$DAY_OF_WEEK) <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Unknown")
 
-#cancelled_flights <- flights[flights$DEP_STATUS == "CANCELLED",]
-#active_flights <- flights[flights$DEP_STATUS != "CANCELLED",]
-
-# rm(flights)
+active_flights <- flights[flights$ACTIVE,]
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Partitions the supplied data into a test and train data set using the 
 # supplied percentage to the training data set.
 #_____________________________________________________________________
 
-test_index <- createDataPartition(y = flights$DEP_STATUS, 
+test_index <- createDataPartition(y = active_flights$DEP_DELAY, 
                                   times = 1,
                                   p = 0.2, 
                                   list = FALSE)
 
-train_set <- flights[-test_index,]
-test_set <- flights[test_index,]
-
+train_set <- active_flights[-test_index,]
+test_set <- active_flights[test_index,]
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Build Train and Test
 #______________________________________________________________________
-# These are the attributes that are known about in advance
+# These are the attributes that a passenger would know about in advance
 
-predictor_columns <- c("MONTH", "ORIGIN_STATE_ABR", "DISTANCE", "DAY_OF_MONTH", "DEP_TIME_BLK", "DAY_OF_WEEK", "OP_UNIQUE_CARRIER")
-predictor_columns <- c("DAY_OF_WEEK")
-predictor_columns <- c("MONTH", "ORIGIN_STATE_ABR", "DISTANCE", "DAY_OF_MONTH", "DEP_TIME_BLK", "DAY_OF_WEEK", "OP_UNIQUE_CARRIER")
 predictor_columns <- c("DEP_TIME_BLK", "DAY_OF_WEEK", "OP_UNIQUE_CARRIER", "ORIGIN")
-predictor_columns <- c("DEP_TIME_BLK", "DAY_OF_WEEK")
 
-y_train<-train_set[,"DEP_STATUS"] 
+# Build train data frame
+y_train<-train_set[,"DEP_DELAY"] 
 x_train<-train_set[, predictor_columns]
-
 train_df<-data.frame(x=x_train,y=y_train)
+
+# Build test data frame
+y_test<-test_set[,"DEP_DELAY"] 
+x_test<-test_set[, predictor_columns]
+test_df<-data.frame(x=x_test)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CART training
 #______________________________________________________________________
 
 library(rpart)
+library(rpart.plot)
 
-train_rpart <- train(y ~ ., method="rpart", tuneGrid=data.frame(cp = seq(0, 0.2, len=10)), data = train_df)
+rpart_mdl <- train(y ~ ., method="rpart", data=train_df, tuneGrid=data.frame(cp = seq(0, 0.2, len=10)), control = rpart.control(minsplit = 3, cp = 0.01), , na.action = na.exclude)
 
-predictions <- train_set %>% 
-  mutate(y_hat = predict(train_rpart))
+rpart_predictions <- predict(rpart_mdl, newdata=test_df)
+
+rpart_RMSE <- RMSE(rpart_predictions, y_test)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Random Forests
+#______________________________________________________________________
+
+
+library(randomForest)
+
+rf_mdl = randomForest(y ~ ., ntree=200, data=train_df, keep.forest=TRUE,importance=TRUE,oob.prox =FALSE, na.action = na.exclude)
+
+rf_predictions <- predict(rf_mdl, newdata=test_df)
+
+rf_RMSE <- RMSE(rf_predictions, y_test)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Visualizer helpers
@@ -126,3 +151,6 @@ format_number <- function(n) {
   prettyNum(n, big.mark = ",")
 }
 
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}

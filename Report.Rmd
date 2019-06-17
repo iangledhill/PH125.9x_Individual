@@ -2,7 +2,7 @@
 title: "Individual Learner"
 subtitle: "US Domestic Flight Delays"
 author: "Ian Gledhill"
-date: "03/06/2019"
+date: "12/06/2019"
 output:
   pdf_document: default
   html_document:
@@ -25,8 +25,7 @@ library(knitr)
 
 ## Overview
 
-This project will look at the delayed flight data recorded in the US for the 3 months from January to March 2018 and use data analysis to create a model to predict whether a flight would be delayed from its scheduled departure time. The data is provided by the US Department of Transport and covers `r length(levels(flights$OP_UNIQUE_CARRIER))` carriers operating from `r length(levels(flights$ORIGIN_AIRPORT_ID))` airports.
-
+This project will look at the delayed flight data recorded in the US for the 3 months from January to March 2018 and use data analysis to create a model to predict whether a flight would be delayed from its scheduled departure time. The data is provided by the US Department of Transport and covers `r length(levels(flights$OP_UNIQUE_CARRIER))` carriers operating from `r length(levels(flights$ORIGIN))` airports.
 
 ## Dataset
 
@@ -36,10 +35,14 @@ The data is provided by:
 
   https://www.transtats.bts.gov
 
-  BUREAU OF TRANSPORTATION STATISTICS 
+  BUREAU OF TRANSPORTATION STATISTICS
+  
   U.S. Department of Transportation 
+  
   1200 New Jersey Avenue, SE 
+  
   Washington, DC 20590 
+  
   855-368-4200 
 
 
@@ -49,7 +52,9 @@ https://www.transtats.bts.gov/Fields.asp?Table_ID=236
 
 
 ### Sample Size for Analysis
-The DoT record more than 500,000 domestic flights per months. The period covered by this project contains `r format_number(nrow(flights))` data points. Each data point has `r length(flights)` measurements.
+The DoT record more than 500,000 domestic flights per month. The period covered by this project contains `r format_number(nrow(flights))` data points. Each data point has `r length(flights)` measurements.
+
+The original data has `r format_number(original_data_size)` observations. For the purposes of expediency a sample of `r format_number(sample_data_size)` has been randomly selected from the original data. In addition only the top `r nrow(top20Airports)` airports based on the number of departures over the data period have been analzed. These can be seen in Appendix 1.
 
 ### Shape of the Data
 The data that the DoT make available falls into the 11 groupings shown below (the number of measurements in each group are shown in brackets). Not all the groupings are relevant to this project, which is only concerned with delayed departures; for example, the arrival performance at the destination airport is not relevant. The groupings that are considered useful are shown in bold.
@@ -100,7 +105,7 @@ flights %>%
 
 * `r format_percent(mean(flights$DEP_STATUS == "DELAYED"))` of flights departed after their scheduled time 
 
-Note that the `r format_percent(mean(flights$DEP_STATUS == "UNKNOWN"))` percentage of flights (equal to `r nrow(flights[flights$DEP_STATUS == "UNKNOWN"])` flights) were not cancelled but have no depature time recorded. 
+Note that the `r format_percent(mean(flights$DEP_STATUS == "UNKNOWN"))` percentage of flights (equal to `r nrow(flights[flights$DEP_STATUS == "UNKNOWN",])` flights) were not cancelled but have no depature time recorded. This is assumed to be errant data and is excluded from further analysis.
 
 ```{r Delay_Duration, echo=FALSE}
 flights %>%
@@ -113,7 +118,7 @@ flights %>%
     theme_minimal()
 ```  
 
-There are quite a small number of outliers which have exceptionally long delay times. These have been included in the 180 minutes bin to make the histogram more readable. We can see that most delays are within 30 minutes. 
+There are a small number of outliers which have exceptionally long delay times. These have been included in the 180 minutes bin to make the histogram more readable. We can see that most delays are within 30 minutes. 
 
 ```{r Delay_By_DayOfWeek, echo=FALSE}
 flights %>%
@@ -136,7 +141,7 @@ flights %>%
     theme_minimal()
 ```
 
-This shows the number of departures in an hour slot (in blue) and the number of delays (in red).  
+This shows that the delay rate changes significantly depending on the time slot peels from early afternoon to early afternoon.   
 
 ```{r Delay_By_DayOfWeek2, echo=FALSE}
 flights %>%
@@ -158,15 +163,37 @@ flights %>%
     theme_minimal()
 ```
 
-This shows the number of departures by day (in blue) and the number of delays (in red). 
+This shows that although the number of departures peeks mid-week and dips at the weekend the delay rate does not vary significantly by day. 
+
+```{r Airport_By_AverageDelay, echo=FALSE}
+flights %>%
+    filter(ACTIVE) %>%
+    group_by(ORIGIN) %>%
+    summarise(
+      n = n(),
+      n_delayed = sum(DEP_DELAY > 0),
+      avg_delay = mean(DEP_DELAY_NEW),
+    ) %>%
+    ggplot(aes(x=reorder(ORIGIN, avg_delay), ORIGIN, y=avg_delay)) + 
+    geom_point(color="blue") +
+    geom_label_repel(aes(label = ifelse(avg_delay>50,as.character(ORIGIN),'')),
+                    box.padding   = 0.35, 
+                    point.padding = 0.5,
+                    segment.color = 'grey50') +
+    ggtitle("Delayed Flights", subtitle="Airport by Average Delay") +
+    xlab("Average Delay") +
+    ylab("Count") +
+    theme_minimal()
+```
+
+Some airports have considerably longer average delay times. The full list of airport codes can be seen here https://www.transtats.bts.gov/FieldInfo.asp?Field_Desc=Origin%20Airport&Field_Type=Char&Lookup_Table=L_AIRPORT&Table_ID=236&SYS_Table_Name=T_ONTIME_REPORTING&Sys_Field_Name=ORIGIN
 
 ### Training and Test Data Partitions
 
 
 ## Goal
 
-The goal of this project is to create a prediction model that would estimate the probably deviation from the scheduled departure time for any  domestic flight from any US airport covered by the DoT data.
-
+The goal of this project is to create a prediction model that can estimates the probably deviation from the scheduled departure time for any  domestic flight from any US airport covered by the DoT data.
 
 
 \newpage
@@ -182,25 +209,58 @@ As these planes don't have a departure time the *DEP_DELAY* for the flight will 
 
 The data set is quite large and has many features. This makes it computationally expensive. To aleviate this Principal Component Analysis (PCA) will be used to reduce the number of features.  
 
-CART (_classification and regression trees_) has been adopted to build a predictive model.
+CART (_classification and regression trees_) and Random Forest have been adopted to build a predictive model.
 
-After training the model the best CP (_complexity parameter_) was found to be `r train_rpart$bestTune$cp`.
+After training the models:
 
-```{r CART_BestFit, echo=FALSE}
-rpart.plot(train_rpart$finalModel, box.palette="Blues")
+* the best CP (_complexity parameter_) for CART was found to be `r rpart_mdl$bestTune$cp`
+
+* the number of nodes used for Random Forests was `r rf_mdl$ntree`
+
+Additionally, random forest is used as a comparison.
+
+```{r important_variables}
+kable(importance(rf_mdl), caption="Feature Importance")
 ```
 
-```{r CART_BestFit_Rules, echo=FALSE}
-rpart.rules(train_rpart$finalModel)
-```
+
 
 \newpage
 # Results
 
+## CART
 
+The RMSE using CART was `r rpart_RMSE`.
+
+```{r CART_BestFit, echo=FALSE}
+  plot(rpart_mdl)
+```
+
+```{r CART_Summary, echo=FALSE}
+print(rpart_mdl)
+```
+
+### Random Forests
+
+The RMSE using Random Forests was `r rf_RMSE`.
+
+```{r RF_Summary, echo=FALSE}
+print(rf_mdl)
+```
 
 \newpage
 # Conclusion
+
+There is some predictive capability but the residual error is quite large which makes the accuracy not very high. Using a larger data set may help this.
+
+\newpage
+# Appendix 1: Top Airports
+
+Only data from the following airports has been analyzed. These are the `r nrow(top20Airports)` busiest airports.
+
+```{r topAirports}
+kable(top20Airports, caption="Top Airports")
+```
 
 
 
